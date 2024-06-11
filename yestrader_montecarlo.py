@@ -99,7 +99,7 @@ def run_simulation():
         profit_loss_ratio_base = average_profit_base / abs(average_loss_base) if average_loss_base != 0 else float('inf')
 
         # 기본 전략의 샤프 비율
-        average_return_base = np.mean(returns[returns != 0])
+        average_return_base = np.mean(returns)
         std_dev_return_base = np.std(returns)
         sharpe_ratio_base = average_return_base / std_dev_return_base if std_dev_return_base != 0 else float('inf')
 
@@ -141,7 +141,7 @@ def run_simulation():
             profit_loss_ratios_mc.append(average_profit_mc / abs(average_loss_mc) if average_loss_mc != 0 else float('inf'))
 
             # 샤프 비율 계산
-            mean_return_mc = np.mean(sim_daily_returns[sim_daily_returns != 0])
+            mean_return_mc = np.mean(sim_daily_returns)
             std_dev_return_mc = np.std(sim_daily_returns)
             sharpe_ratios_mc.append(mean_return_mc / std_dev_return_mc if std_dev_return_mc != 0 else float('inf'))
 

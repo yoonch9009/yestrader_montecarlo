@@ -238,6 +238,11 @@ def copy_results_to_clipboard():
     except Exception as e:
         messagebox.showerror("오류", str(e))
 
+# Define the function to handle window close event
+def on_closing():
+    if messagebox.askokcancel("종료", "프로그램을 종료하시겠습니까?"):
+        app.destroy()  # Completely close the application
+
 # Set up the main application window
 app = tk.Tk()
 app.title("몬테카를로 시뮬레이션 GUI")
@@ -300,6 +305,9 @@ for col in columns:
 # Frame to hold the plot
 plot_frame = tk.Frame(app)
 plot_frame.grid(row=5, column=0, columnspan=3, padx=10, pady=10)
+
+# Set the protocol for window close button to call the on_closing function
+app.protocol("WM_DELETE_WINDOW", on_closing)
 
 # Start the application
 app.mainloop()

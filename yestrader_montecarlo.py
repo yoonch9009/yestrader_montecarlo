@@ -8,6 +8,8 @@ import matplotlib.font_manager as fm
 from tkinter import ttk
 import math
 import seaborn as sns
+import os
+import sys
 
 # Function to set matplotlib font to support Korean characters
 def set_korean_font():
@@ -389,9 +391,22 @@ def on_closing():
     if messagebox.askokcancel("종료", "프로그램을 종료하시겠습니까?"):
         app.destroy()  # Completely close the application
 
+# Function to get the resource path
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS  # PyInstaller creates a temporary folder to unpack files
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))  # Fallback for normal script execution
+    return os.path.join(base_path, relative_path)
+
 # Set up the main application window
 app = tk.Tk()
 app.title("몬테카를로 시뮬레이션 GUI")
+
+# 아이콘 설정 (같은 디렉토리에 저장)
+icon_path = resource_path("logo.ico")  # 수정된 부분
+app.iconbitmap(icon_path)
 
 # Create and place widgets
 file_path_entry = tk.Entry(app, width=50)

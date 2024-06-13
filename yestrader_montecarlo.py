@@ -6,20 +6,33 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.font_manager as fm
 from tkinter import ttk
-from scipy import stats
+import math
+import seaborn as sns
 
 # Function to set matplotlib font to support Korean characters
 def set_korean_font():
     plt.rcParams['font.family'] = 'Malgun Gothic'  # 'Malgun Gothic' is commonly used in Windows for Korean
     plt.rcParams['axes.unicode_minus'] = False  # Ensure minus sign is shown correctly
 
-# Function to calculate confidence intervals
-def calculate_confidence_interval(data, confidence=0.95):
-    n = len(data)
-    mean = np.mean(data)
-    se = stats.sem(data)  # Standard error of the mean
-    h = se * stats.t.ppf((1 + confidence) / 2, n - 1)
-    return mean, mean - h, mean + h
+# Function to calculate the maximum underwater period
+def max_underwater_period(cumulative_returns):
+    running_max = np.maximum.accumulate(cumulative_returns)
+    underwater_periods = (running_max - cumulative_returns) > 0  # Boolean array indicating underwater periods
+    underwater_durations = []
+    current_duration = 0
+
+    for period in underwater_periods:
+        if period:
+            current_duration += 1
+        else:
+            if current_duration > 0:
+                underwater_durations.append(current_duration)
+            current_duration = 0
+
+    if current_duration > 0:
+        underwater_durations.append(current_duration)
+
+    return max(underwater_durations) if underwater_durations else 0
 
 # Function to perform Monte Carlo Simulation and calculate benchmarks
 def run_simulation():
@@ -55,14 +68,42 @@ def run_simulation():
             random_daily_returns = np.random.choice(returns, size=num_days, replace=True)
             simulation_daily_returns[i] = random_daily_returns
 
-        # Create a figure for plotting cumulative PnL of simulations
-        fig, ax = plt.subplots(figsize=(14, 7))
+        # Create a figure for plotting cumulative PnL of simulations with seaborn style
+        sns.set_theme(style="whitegrid", font='Malgun Gothic')  # Apply seaborn whitegrid style
+
+        fig, ax = plt.subplots(figsize=(12, 5))
         cumulative_simulations = np.cumsum(simulation_daily_returns, axis=1)  # Cumulative PnL for plotting
-        ax.plot(cumulative_simulations.T, color='blue', alpha=0.1)
-        ax.set_title(f'{sheet_name}에 대한 몬테카를로 시뮬레이션')
-        ax.set_xlabel('일수')
-        ax.set_ylabel('누적 PnL (Pt)')
-        ax.grid(True)
+
+        # Calculate percentiles for shading
+        percentiles = np.percentile(cumulative_simulations, [5, 25, 50, 75, 95], axis=0)
+        days = np.arange(num_days)
+
+        # Plot the median line
+        ax.plot(days, percentiles[2], label='Median', color='blue', linewidth=2)
+
+        # Fill between the percentiles for shading
+        ax.fill_between(days, percentiles[0], percentiles[4], color='lightblue', alpha=0.3, label='5th-95th Percentile')
+        ax.fill_between(days, percentiles[1], percentiles[3], color='blue', alpha=0.3, label='25th-75th Percentile')
+
+        # Plot a few individual simulation paths for better visualization
+        for i in range(min(num_simulations, 20)):  # Show up to 20 paths
+            ax.plot(days, cumulative_simulations[i], color='gray', alpha=0.5, linewidth=0.8)
+
+        # Highlight the first and last simulation paths
+        # ax.plot(days, cumulative_simulations[0], color='red', linestyle='--', alpha=0.7, label='First Simulation')
+        # ax.plot(days, cumulative_simulations[-1], color='green', linestyle='--', alpha=0.7, label='Last Simulation')
+
+        # Set titles and labels
+        # ax.set_title(f'Monte Carlo Simulation for {sheet_name}', fontsize=16)
+        # ax.set_xlabel('Days', fontsize=12)
+        # ax.set_ylabel('Cumulative PnL (Pt)', fontsize=12)
+        ax.set_title(f'{sheet_name}에 대한 몬테카를로 시뮬레이션', fontsize=16)
+        ax.set_xlabel('일수', fontsize=12)
+        ax.set_ylabel('누적 PnL (Pt)', fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+        # Add legend
+        ax.legend()
 
         # Clear previous canvas if it exists
         if hasattr(run_simulation, 'canvas'):
@@ -76,11 +117,8 @@ def run_simulation():
         # Calculate summary statistics based on final PnL
         final_pnl = cumulative_simulations[:, -1]
         mean_final_pnl = np.mean(final_pnl)
-        percentiles = [5, 10, 25, 50, 75, 90, 95]
+        percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
         final_pnl_percentiles = np.percentile(final_pnl, percentiles)
-
-        # Confidence interval for final PnL
-        mean_pnl, lower_pnl, upper_pnl = calculate_confidence_interval(final_pnl)
 
         # 기본 전략에 대한 계산
         cumulative_returns_base = initial_value + np.cumsum(returns)  # 기본 전략의 누적 수익률
@@ -101,7 +139,7 @@ def run_simulation():
         # 기본 전략의 샤프 비율
         average_return_base = np.mean(returns)
         std_dev_return_base = np.std(returns)
-        sharpe_ratio_base = average_return_base / std_dev_return_base if std_dev_return_base != 0 else float('inf')
+        sharpe_ratio_base = average_return_base / std_dev_return_base * np.sqrt(252 / 12) if std_dev_return_base != 0 else float('inf')
 
         # 기본 전략의 CAGR
         years = num_days / 252  # Typical trading year assumption: 252 trading days in a year
@@ -116,12 +154,20 @@ def run_simulation():
         drawdown_base[running_max_base == 0] = 0  # Ensure no division by zero issues
         max_drawdown_base = np.max(drawdown_base)
 
+        # 기본 전략의 최대 underwater 기간
+        max_underwater_period_base = max_underwater_period(cumulative_returns_base)
+
+        # 기본 전략의 보상비율
+        reward_ratio_base = final_value_base / abs(np.max(running_max_base - cumulative_returns_base)) if max_drawdown_base != 0 else float('inf')
+
         # 몬테카를로 시뮬레이션에서 개별 지표의 중앙값 및 분위 계산
         win_probabilities_mc = []
         profit_loss_ratios_mc = []
         sharpe_ratios_mc = []
         cagr_mc = []
         max_drawdowns_mc = []
+        max_underwater_periods_mc = []
+        reward_ratios_mc = []
 
         for sim in range(num_simulations):
             sim_daily_returns = simulation_daily_returns[sim]
@@ -143,7 +189,7 @@ def run_simulation():
             # 샤프 비율 계산
             mean_return_mc = np.mean(sim_daily_returns)
             std_dev_return_mc = np.std(sim_daily_returns)
-            sharpe_ratios_mc.append(mean_return_mc / std_dev_return_mc if std_dev_return_mc != 0 else float('inf'))
+            sharpe_ratios_mc.append(mean_return_mc / std_dev_return_mc * np.sqrt(252 / 12) if std_dev_return_mc != 0 else float('inf'))
 
             # CAGR 계산
             if final_pnl_sim > initial_value:
@@ -158,21 +204,33 @@ def run_simulation():
             sim_drawdown[sim_running_max == 0] = 0  # Ensure no division by zero issues
             max_drawdowns_mc.append(np.max(sim_drawdown))
 
+            # 최대 underwater 기간 계산
+            max_underwater_periods_mc.append(max_underwater_period(sim_cumulative_returns))
+
+            # 보상비율 계산
+            reward_ratios_mc.append(final_pnl_sim / abs(np.max(sim_running_max - sim_cumulative_returns)) if np.max(sim_drawdown) != 0 else float('inf'))
+
         # 각 지표의 중앙값 및 분위 계산
         win_probability_percentiles = np.percentile(win_probabilities_mc, percentiles)
-        mean_win_probability, lower_win_probability, upper_win_probability = calculate_confidence_interval(win_probabilities_mc)
+        mean_win_probability = np.mean(win_probabilities_mc)
 
         profit_loss_ratio_percentiles = np.percentile(profit_loss_ratios_mc, percentiles)
-        mean_profit_loss_ratio, lower_profit_loss_ratio, upper_profit_loss_ratio = calculate_confidence_interval(profit_loss_ratios_mc)
+        mean_profit_loss_ratio = np.mean(profit_loss_ratios_mc)
 
         sharpe_ratio_percentiles = np.percentile(sharpe_ratios_mc, percentiles)
-        mean_sharpe_ratio, lower_sharpe_ratio, upper_sharpe_ratio = calculate_confidence_interval(sharpe_ratios_mc)
+        mean_sharpe_ratio = np.mean(sharpe_ratios_mc)
 
         cagr_percentiles = np.percentile(cagr_mc, percentiles)
-        mean_cagr, lower_cagr, upper_cagr = calculate_confidence_interval(cagr_mc)
+        mean_cagr = np.mean(cagr_mc)
 
         max_drawdown_percentiles = np.flip(np.percentile(max_drawdowns_mc, percentiles)) # MDD는 내림차순
-        mean_max_drawdown, lower_max_drawdown, upper_max_drawdown = calculate_confidence_interval(max_drawdowns_mc)
+        mean_max_drawdown = np.mean(max_drawdowns_mc)
+
+        max_underwater_period_percentiles = np.flip(np.percentile(max_underwater_periods_mc, percentiles)) # underwater는 내림차순
+        mean_max_underwater_period = np.mean(max_underwater_periods_mc)
+
+        reward_ratio_percentiles = np.percentile(reward_ratios_mc, percentiles)
+        mean_reward_ratio = np.mean(reward_ratios_mc)
 
         # Clear the previous results in Treeview
         for item in results_table.get_children():
@@ -180,23 +238,111 @@ def run_simulation():
 
         # Insert new results into the Treeview with the new format
         formatted_results = [
-            ("기본 전략", "최종 PnL", f"{final_value_base:.2f}"),
-            ("기본 전략", "승률", f"{winning_probability_base:.2%}"),
-            ("기본 전략", "손익비", f"{profit_loss_ratio_base:.2f}"),
-            ("기본 전략", "샤프 비율", f"{sharpe_ratio_base:.2f}"),
-            ("기본 전략", "CAGR", f"{cagr_base:.2%}"),
-            ("기본 전략", "최대 낙폭 (MDD)", f"{max_drawdown_base:.2%}"),
-            ("몬테카를로", "최종 PnL", f"{mean_final_pnl:.2f}", f"{final_pnl_percentiles[0]:.2f}", f"{final_pnl_percentiles[1]:.2f}", f"{final_pnl_percentiles[2]:.2f}", f"{final_pnl_percentiles[3]:.2f}", f"{final_pnl_percentiles[4]:.2f}", f"{final_pnl_percentiles[5]:.2f}", f"{final_pnl_percentiles[6]:.2f}", f"{mean_pnl:.2f} [{lower_pnl:.2f}, {upper_pnl:.2f}]"),
-            ("몬테카를로", "승률", f"{mean_win_probability:.2%}", f"{win_probability_percentiles[0]:.2%}", f"{win_probability_percentiles[1]:.2%}", f"{win_probability_percentiles[2]:.2%}", f"{win_probability_percentiles[3]:.2%}", f"{win_probability_percentiles[4]:.2%}", f"{win_probability_percentiles[5]:.2%}", f"{win_probability_percentiles[6]:.2%}", f"{mean_win_probability:.2%} [{lower_win_probability:.2%}, {upper_win_probability:.2%}]"),
-            ("몬테카를로", "손익비", f"{mean_profit_loss_ratio:.2f}", f"{profit_loss_ratio_percentiles[0]:.2f}", f"{profit_loss_ratio_percentiles[1]:.2f}", f"{profit_loss_ratio_percentiles[2]:.2f}", f"{profit_loss_ratio_percentiles[3]:.2f}", f"{profit_loss_ratio_percentiles[4]:.2f}", f"{profit_loss_ratio_percentiles[5]:.2f}", f"{profit_loss_ratio_percentiles[6]:.2f}", f"{mean_profit_loss_ratio:.2f} [{lower_profit_loss_ratio:.2f}, {upper_profit_loss_ratio:.2f}]"),
-            ("몬테카를로", "샤프 비율", f"{mean_sharpe_ratio:.2f}", f"{sharpe_ratio_percentiles[0]:.2f}", f"{sharpe_ratio_percentiles[1]:.2f}", f"{sharpe_ratio_percentiles[2]:.2f}", f"{sharpe_ratio_percentiles[3]:.2f}", f"{sharpe_ratio_percentiles[4]:.2f}", f"{sharpe_ratio_percentiles[5]:.2f}", f"{sharpe_ratio_percentiles[6]:.2f}", f"{mean_sharpe_ratio:.2f} [{lower_sharpe_ratio:.2f}, {upper_sharpe_ratio:.2f}]"),
-            ("몬테카를로", "CAGR", f"{mean_cagr:.2%}", f"{cagr_percentiles[0]:.2%}", f"{cagr_percentiles[1]:.2%}", f"{cagr_percentiles[2]:.2%}", f"{cagr_percentiles[3]:.2%}", f"{cagr_percentiles[4]:.2%}", f"{cagr_percentiles[5]:.2%}", f"{cagr_percentiles[6]:.2%}", f"{mean_cagr:.2%} [{lower_cagr:.2%}, {upper_cagr:.2%}]"),
-            ("몬테카를로", "최대 낙폭 (MDD)", f"{mean_max_drawdown:.2%}", f"{max_drawdown_percentiles[0]:.2%}", f"{max_drawdown_percentiles[1]:.2%}", f"{max_drawdown_percentiles[2]:.2%}", f"{max_drawdown_percentiles[3]:.2%}", f"{max_drawdown_percentiles[4]:.2%}", f"{max_drawdown_percentiles[5]:.2%}", f"{max_drawdown_percentiles[6]:.2%}", f"{mean_max_drawdown:.2%} [{lower_max_drawdown:.2%}, {upper_max_drawdown:.2%}]"),
+            ("최종 PnL", 
+                f"{final_value_base:.2f}", 
+                f"{mean_final_pnl:.2f}", 
+                f"{final_pnl_percentiles[0]:.2f}",  # 1% 분위
+                f"{final_pnl_percentiles[1]:.2f}",  # 5% 분위
+                f"{final_pnl_percentiles[2]:.2f}",  # 10% 분위
+                f"{final_pnl_percentiles[3]:.2f}",  # 25% 분위
+                f"{final_pnl_percentiles[4]:.2f}",  # 50% 분위
+                f"{final_pnl_percentiles[5]:.2f}",  # 75% 분위
+                f"{final_pnl_percentiles[6]:.2f}",  # 90% 분위
+                f"{final_pnl_percentiles[7]:.2f}",  # 95% 분위
+                f"{final_pnl_percentiles[8]:.2f}"   # 99% 분위
+            ),
+            ("승률", 
+                f"{winning_probability_base:.2%}", 
+                f"{mean_win_probability:.2%}", 
+                f"{win_probability_percentiles[0]:.2%}",  # 1% 분위
+                f"{win_probability_percentiles[1]:.2%}",  # 5% 분위
+                f"{win_probability_percentiles[2]:.2%}",  # 10% 분위
+                f"{win_probability_percentiles[3]:.2%}",  # 25% 분위
+                f"{win_probability_percentiles[4]:.2%}",  # 50% 분위
+                f"{win_probability_percentiles[5]:.2%}",  # 75% 분위
+                f"{win_probability_percentiles[6]:.2%}",  # 90% 분위
+                f"{win_probability_percentiles[7]:.2%}",  # 95% 분위
+                f"{win_probability_percentiles[8]:.2%}"   # 99% 분위
+            ),
+            ("평균 손익비", 
+                f"{profit_loss_ratio_base:.2f}", 
+                f"{mean_profit_loss_ratio:.2f}", 
+                f"{profit_loss_ratio_percentiles[0]:.2f}",  # 1% 분위
+                f"{profit_loss_ratio_percentiles[1]:.2f}",  # 5% 분위
+                f"{profit_loss_ratio_percentiles[2]:.2f}",  # 10% 분위
+                f"{profit_loss_ratio_percentiles[3]:.2f}",  # 25% 분위
+                f"{profit_loss_ratio_percentiles[4]:.2f}",  # 50% 분위
+                f"{profit_loss_ratio_percentiles[5]:.2f}",  # 75% 분위
+                f"{profit_loss_ratio_percentiles[6]:.2f}",  # 90% 분위
+                f"{profit_loss_ratio_percentiles[7]:.2f}",  # 95% 분위
+                f"{profit_loss_ratio_percentiles[8]:.2f}"   # 99% 분위
+            ),
+            ("CAGR", 
+                f"{cagr_base:.2%}", 
+                f"{mean_cagr:.2%}", 
+                f"{cagr_percentiles[0]:.2%}",  # 1% 분위
+                f"{cagr_percentiles[1]:.2%}",  # 5% 분위
+                f"{cagr_percentiles[2]:.2%}",  # 10% 분위
+                f"{cagr_percentiles[3]:.2%}",  # 25% 분위
+                f"{cagr_percentiles[4]:.2%}",  # 50% 분위
+                f"{cagr_percentiles[5]:.2%}",  # 75% 분위
+                f"{cagr_percentiles[6]:.2%}",  # 90% 분위
+                f"{cagr_percentiles[7]:.2%}",  # 95% 분위
+                f"{cagr_percentiles[8]:.2%}"   # 99% 분위
+            ),
+            ("최대 낙폭 (MDD)", 
+                f"{max_drawdown_base:.2%}", 
+                f"{mean_max_drawdown:.2%}", 
+                f"{max_drawdown_percentiles[0]:.2%}",  # 1% 분위
+                f"{max_drawdown_percentiles[1]:.2%}",  # 5% 분위
+                f"{max_drawdown_percentiles[2]:.2%}",  # 10% 분위
+                f"{max_drawdown_percentiles[3]:.2%}",  # 25% 분위
+                f"{max_drawdown_percentiles[4]:.2%}",  # 50% 분위
+                f"{max_drawdown_percentiles[5]:.2%}",  # 75% 분위
+                f"{max_drawdown_percentiles[6]:.2%}",  # 90% 분위
+                f"{max_drawdown_percentiles[7]:.2%}",  # 95% 분위
+                f"{max_drawdown_percentiles[8]:.2%}"   # 99% 분위
+            ),
+            ("월 샤프 비율", 
+                f"{sharpe_ratio_base:.2f}", 
+                f"{mean_sharpe_ratio:.2f}", 
+                f"{sharpe_ratio_percentiles[0]:.2f}",  # 1% 분위
+                f"{sharpe_ratio_percentiles[1]:.2f}",  # 5% 분위
+                f"{sharpe_ratio_percentiles[2]:.2f}",  # 10% 분위
+                f"{sharpe_ratio_percentiles[3]:.2f}",  # 25% 분위
+                f"{sharpe_ratio_percentiles[4]:.2f}",  # 50% 분위
+                f"{sharpe_ratio_percentiles[5]:.2f}",  # 75% 분위
+                f"{sharpe_ratio_percentiles[6]:.2f}",  # 90% 분위
+                f"{sharpe_ratio_percentiles[7]:.2f}",  # 95% 분위
+                f"{sharpe_ratio_percentiles[8]:.2f}"   # 99% 분위
+            ),
+            ("보상비율", 
+                f"{reward_ratio_base:.2f}", 
+                f"{mean_reward_ratio:.2f}", 
+                f"{reward_ratio_percentiles[0]:.2f}",  # 1% 분위
+                f"{reward_ratio_percentiles[1]:.2f}",  # 5% 분위
+                f"{reward_ratio_percentiles[2]:.2f}",  # 10% 분위
+                f"{reward_ratio_percentiles[3]:.2f}",  # 25% 분위
+                f"{reward_ratio_percentiles[4]:.2f}",  # 50% 분위
+                f"{reward_ratio_percentiles[5]:.2f}",  # 75% 분위
+                f"{reward_ratio_percentiles[6]:.2f}",  # 90% 분위
+                f"{reward_ratio_percentiles[7]:.2f}",  # 95% 분위
+                f"{reward_ratio_percentiles[8]:.2f}"   # 99% 분위
+            ),
+            ("최대 underwater 기간", 
+                f"{math.ceil(max_underwater_period_base)} 일", 
+                f"{math.ceil(mean_max_underwater_period)} 일", 
+                f"{math.ceil(max_underwater_period_percentiles[0])} 일",  # 1% 분위
+                f"{math.ceil(max_underwater_period_percentiles[1])} 일",  # 5% 분위
+                f"{math.ceil(max_underwater_period_percentiles[2])} 일",  # 10% 분위
+                f"{math.ceil(max_underwater_period_percentiles[3])} 일",  # 25% 분위
+                f"{math.ceil(max_underwater_period_percentiles[4])} 일",  # 50% 분위
+                f"{math.ceil(max_underwater_period_percentiles[5])} 일",  # 75% 분위
+                f"{math.ceil(max_underwater_period_percentiles[6])} 일",  # 90% 분위
+                f"{math.ceil(max_underwater_period_percentiles[7])} 일",  # 95% 분위
+                f"{math.ceil(max_underwater_period_percentiles[8])} 일"   # 99% 분위
+            )
         ]
-
-        # # Define headers for new formatted results
-        # columns = ("분류", "지표", "평균", "5% 분위", "10% 분위", "25% 분위", "50% 분위", "75% 분위", "90% 분위", "95% 분위", "신뢰 구간 (95%)")
-        # results_table["columns"] = columns
 
         # Set new headings
         for col in columns:
@@ -249,44 +395,45 @@ app.title("몬테카를로 시뮬레이션 GUI")
 
 # Create and place widgets
 file_path_entry = tk.Entry(app, width=50)
-file_path_entry.grid(row=0, column=1, padx=10, pady=10)
+file_path_entry.grid(row=0, column=1, padx=10, pady=3)
 
 browse_button = tk.Button(app, text="파일 찾기", command=open_file_dialog)
-browse_button.grid(row=0, column=2, padx=10, pady=10)
+browse_button.grid(row=0, column=2, padx=10, pady=3)
 
-tk.Label(app, text="엑셀 파일 경로:").grid(row=0, column=0, padx=10, pady=10)
+tk.Label(app, text="엑셀 파일 경로:").grid(row=0, column=0, padx=10, pady=3)
 
-tk.Label(app, text="시트 이름 (선택사항):").grid(row=1, column=0, padx=10, pady=10)
+tk.Label(app, text="시트 이름 (선택사항):").grid(row=1, column=0, padx=10, pady=3)
 sheet_name_entry = tk.Entry(app, width=50)
-sheet_name_entry.grid(row=1, column=1, padx=10, pady=10)
+sheet_name_entry.grid(row=1, column=1, padx=10, pady=3)
 
-tk.Label(app, text="초기 자본 (초기 자본금/거래승수, 단위: Pt):").grid(row=2, column=0, padx=10, pady=10)
+tk.Label(app, text="초기 자본 (초기 자본금/거래승수, 단위: Pt):").grid(row=2, column=0, padx=10, pady=3)
 initial_value_entry = tk.Entry(app, width=50)
 initial_value_entry.insert(0, "4000")  # Set default value to 4000
-initial_value_entry.grid(row=2, column=1, padx=10, pady=10)
+initial_value_entry.grid(row=2, column=1, padx=10, pady=3)
 
-tk.Label(app, text="시뮬레이션 횟수:").grid(row=3, column=0, padx=10, pady=10)
+tk.Label(app, text="시뮬레이션 횟수:").grid(row=3, column=0, padx=10, pady=3)
 simulation_entry = tk.Entry(app, width=50)
 simulation_entry.insert(0, "1000")  # Set default value to 1000
-simulation_entry.grid(row=3, column=1, padx=10, pady=10)
+simulation_entry.grid(row=3, column=1, padx=10, pady=3)
 
 run_button = tk.Button(app, text="시뮬레이션 실행", command=run_simulation)
-run_button.grid(row=2, column=2, padx=10, pady=10)
+run_button.grid(row=2, column=2, padx=10, pady=3)
 
 # Add a button to copy results to clipboard
 copy_button = tk.Button(app, text="결과를 클립보드에 복사", command=copy_results_to_clipboard)
-copy_button.grid(row=3, column=2, padx=10, pady=10)
+copy_button.grid(row=3, column=2, padx=10, pady=3)
 
 # Create Treeview widget to display results in a table format
-columns = ("분류", "지표", "평균", "5% 분위", "10% 분위", "25% 분위", "50% 분위", "75% 분위", "90% 분위", "95% 분위", "평균 신뢰 구간 (95%)")
-results_table = ttk.Treeview(app, columns=columns, show='headings', height=12)
-results_table.grid(row=4, column=0, columnspan=3, padx=10, pady=10)
+columns = ("지표", "기본전략", "평균", "1% 분위", "5% 분위", "10% 분위", "25% 분위", "50% 분위", "75% 분위", "90% 분위", "95% 분위", "99% 분위")
+results_table = ttk.Treeview(app, columns=columns, show='headings', height=8)
+results_table.grid(row=4, column=0, columnspan=3, padx=10, pady=3)
 
 # Define headings and set column width
 column_widths = {
-    "분류": 100,
     "지표": 150,
+    "기본전략": 100,
     "평균": 100,
+    "1% 분위": 100,
     "5% 분위": 100,
     "10% 분위": 100,
     "25% 분위": 100,
@@ -294,7 +441,7 @@ column_widths = {
     "75% 분위": 100,
     "90% 분위": 100,
     "95% 분위": 100,
-    "평균 신뢰 구간 (95%)": 200
+    "99% 분위": 100,
 }
 
 # Define headings
@@ -304,7 +451,7 @@ for col in columns:
 
 # Frame to hold the plot
 plot_frame = tk.Frame(app)
-plot_frame.grid(row=5, column=0, columnspan=3, padx=10, pady=10)
+plot_frame.grid(row=5, column=0, columnspan=3, padx=10, pady=3)
 
 # Set the protocol for window close button to call the on_closing function
 app.protocol("WM_DELETE_WINDOW", on_closing)

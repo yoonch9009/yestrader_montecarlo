@@ -12,4 +12,4 @@
 
 프로그램 예시
 
-![예스_몬테카를로](https://github.com/yoonch9009/yestrader_montecarlo/assets/34851946/6c52ee10-321d-4208-8908-9b2259415b71)
+![image](https://github.com/yoonch9009/yestrader_montecarlo/assets/34851946/b540129e-6ff7-4f1a-ac9a-46356303a039)
